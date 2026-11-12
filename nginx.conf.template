@@ -1,0 +1,28 @@
+server {
+    listen ${PORT};
+    listen [::]:${PORT};
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 16m;
+
+    # Relais vers l'API (URL publique du backend sur Railway).
+    location /api/ {
+        proxy_pass ${API_UPSTREAM};
+        proxy_ssl_server_name on;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+
+    # Le service worker et l'index ne doivent jamais être mis en cache par le navigateur.
+    location = /ngsw-worker.js { add_header Cache-Control "no-cache"; }
+    location = /ngsw.json      { add_header Cache-Control "no-cache"; }
+    location = /index.html     { add_header Cache-Control "no-cache"; }
+
+    # Application monopage : toute route inconnue renvoie index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
