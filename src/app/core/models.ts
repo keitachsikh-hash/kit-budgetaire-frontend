@@ -15,8 +15,24 @@ export interface AccountRequest {
 export interface Category { id: number; name: string; type: CategoryType; icon: string; color: string; }
 export type CategoryRequest = Omit<Category, 'id'>;
 
+export type MobileOperator = 'ORANGE' | 'YAS' | 'EXPRESSO';
+export const MOBILE_OPERATORS: { value: MobileOperator; label: string; color: string }[] = [
+  { value: 'ORANGE', label: 'Orange', color: '#ff7900' },
+  { value: 'YAS', label: 'Yas', color: '#0057b8' },
+  { value: 'EXPRESSO', label: 'Expresso', color: '#00a651' },
+];
+export function operatorLabel(op: MobileOperator | null | undefined): string {
+  return MOBILE_OPERATORS.find(o => o.value === op)?.label ?? '';
+}
+/** Catégorie « Crédit » (recharges téléphoniques) : l'opérateur doit être précisé. */
+export function isCreditCategory(c: { name: string } | undefined): boolean {
+  return !!c && c.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() === 'credit';
+}
+export type ReportPeriod = 'WEEK' | 'MONTH' | 'YEAR';
+
 export interface Transaction {
   id: number; type: CategoryType; amount: number; date: string; description: string | null;
+  operator: MobileOperator | null;
   account: { id: number; name: string; type: string; color: string };
   category: { id: number; name: string; icon: string; color: string };
 }
@@ -33,7 +49,7 @@ export interface Extraction { lines: ExtractedLine[]; notes: string; }
 export interface TransactionSummary { income: number; expense: number; net: number; count: number; }
 export interface TransactionRequest {
   type: CategoryType; amount: number; date: string; accountId: number; categoryId: number;
-  description: string;
+  description: string; operator?: MobileOperator | null;
 }
 export interface TransactionFilter {
   from?: string; to?: string; type?: CategoryType | ''; accountId?: number | null;

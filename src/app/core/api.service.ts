@@ -5,7 +5,7 @@ import { Observable } from 'rxjs';
 import { API_URL } from './config';
 import {
   Account, AccountRequest, BudgetOverview, BudgetRequest, Category, CategoryRequest, CategoryType, Dashboard, Goal,
-  Extraction, GoalRequest, Page, ScannedDocument, Transaction, TransactionFilter, TransactionRequest, TransactionSummary,
+  Extraction, GoalRequest, Page, ReportPeriod, ScannedDocument, Transaction, TransactionFilter, TransactionRequest, TransactionSummary,
 } from './models';
 
 @Injectable({ providedIn: 'root' })
@@ -44,6 +44,11 @@ export class ApiService {
   }
   exportTransactions(filter: TransactionFilter): Observable<Blob> {
     return this.http.get(`${API_URL}/transactions/export`, { params: toParams(filter), responseType: 'blob' });
+  }
+  /** Relevé PDF des dépenses de la semaine / du mois / de l'année contenant la date. */
+  expensesPdf(period: ReportPeriod, date: string): Observable<Blob> {
+    return this.http.get(`${API_URL}/transactions/expenses/pdf`,
+      { params: new HttpParams().set('period', period).set('date', date), responseType: 'blob' });
   }
   saveTransaction(req: TransactionRequest, id?: number): Observable<Transaction> {
     return id ? this.http.put<Transaction>(`${API_URL}/transactions/${id}`, req)

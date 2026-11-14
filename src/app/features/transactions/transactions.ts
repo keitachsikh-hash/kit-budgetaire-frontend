@@ -5,8 +5,8 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 
 import { ApiService, errorMessage } from '../../core/api.service';
 import {
-  Account, Category, CategoryType, Page, Transaction, TransactionSummary, TransactionFilter, TransactionRequest, currentPeriod,
-  periodBounds, periodLabel, shiftPeriod, today,
+  Account, Category, CategoryType, MOBILE_OPERATORS, Page, ReportPeriod, Transaction, TransactionSummary, TransactionFilter,
+  TransactionRequest, currentPeriod, isCreditCategory, operatorLabel, periodBounds, periodLabel, shiftPeriod, today,
 } from '../../core/models';
 import { PendingImportStore } from '../../core/pending-import';
 import { downloadBlob } from '../../shared/file';
@@ -36,6 +36,11 @@ import { MoneyPipe } from '../../shared/money.pipe';
             <li><a class="dropdown-item" routerLink="/archives"><i class="bi bi-journal-text me-2 text-accent"></i>Depuis une copie manuscrite…</a></li>
             <li><hr class="dropdown-divider"></li>
             <li><button class="dropdown-item" (click)="exportCsv()"><i class="bi bi-download me-2"></i>Exporter les opérations (CSV)</button></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><h6 class="dropdown-header">Télécharger les dépenses (PDF)</h6></li>
+            <li><button class="dropdown-item" (click)="openPdf('WEEK')"><i class="bi bi-file-earmark-pdf me-2 text-danger"></i>Par semaine…</button></li>
+            <li><button class="dropdown-item" (click)="openPdf('MONTH')"><i class="bi bi-file-earmark-pdf me-2 text-danger"></i>Par mois…</button></li>
+            <li><button class="dropdown-item" (click)="openPdf('YEAR')"><i class="bi bi-file-earmark-pdf me-2 text-danger"></i>Par année…</button></li>
           </ul>
         </div>
         <input #fileInput type="file" hidden accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
@@ -92,7 +97,7 @@ import { MoneyPipe } from '../../shared/money.pipe';
           <span class="cat-icon" [style.background]="t.category.color"><i class="bi bi-{{ t.category.icon }}"></i></span>
           <div class="flex-grow-1 min-w-0">
             <div class="fw-semibold text-truncate">{{ t.description || t.category.name }}</div>
-            <div class="small text-body-secondary text-truncate">{{ t.date }} · {{ t.account.name }}</div>
+            <div class="small text-body-secondary text-truncate">{{ t.date }} · {{ t.account.name }}@if (t.operator) { · {{ opLabel(t.operator) }} }</div>
           </div>
           <strong class="text-nowrap" [class.text-success]="t.type === 'INCOME'" [class.text-danger]="t.type === 'EXPENSE'">
             {{ t.type === 'INCOME' ? '+' : '−' }} {{ t.amount | money }}</strong>
@@ -109,7 +114,7 @@ import { MoneyPipe } from '../../shared/money.pipe';
           @for (t of page()?.content ?? []; track t.id) {
             <tr>
               <td class="text-nowrap">{{ t.date }}</td>
-              <td><span class="cat-icon sm me-2" [style.background]="t.category.color"><i class="bi bi-{{ t.category.icon }}"></i></span>{{ t.category.name }}</td>
+              <td><span class="cat-icon sm me-2" [style.background]="t.category.color"><i class="bi bi-{{ t.category.icon }}"></i></span>{{ t.category.name }}@if (t.operator) { <span class="badge rounded-pill text-bg-light border ms-1">{{ opLabel(t.operator) }}</span> }</td>
               <td class="d-none d-md-table-cell text-body-secondary">{{ t.description }}</td>
               <td class="d-none d-sm-table-cell"><i class="bi bi-circle-fill small me-1" [style.color]="t.account.color"></i>{{ t.account.name }}</td>
               <td class="text-end fw-semibold text-nowrap" [class.text-success]="t.type === 'INCOME'" [class.text-danger]="t.type === 'EXPENSE'">
@@ -155,9 +160,9 @@ import { MoneyPipe } from '../../shared/money.pipe';
             <div class="modal-body">
               @if (formError()) { <div class="alert alert-danger py-2">{{ formError() }}</div> }
               <div class="btn-group w-100 mb-3" role="group">
-                <input type="radio" class="btn-check" id="t-exp" name="type" value="EXPENSE" [(ngModel)]="form()!.type" (ngModelChange)="form()!.categoryId = 0">
+                <input type="radio" class="btn-check" id="t-exp" name="type" value="EXPENSE" [(ngModel)]="form()!.type" (ngModelChange)="form()!.categoryId = 0; form()!.operator = null">
                 <label class="btn btn-outline-danger" for="t-exp">Dépense</label>
-                <input type="radio" class="btn-check" id="t-inc" name="type" value="INCOME" [(ngModel)]="form()!.type" (ngModelChange)="form()!.categoryId = 0">
+                <input type="radio" class="btn-check" id="t-inc" name="type" value="INCOME" [(ngModel)]="form()!.type" (ngModelChange)="form()!.categoryId = 0; form()!.operator = null">
                 <label class="btn btn-outline-success" for="t-inc">Revenu</label>
               </div>
               <div class="row g-3">
@@ -166,7 +171,7 @@ import { MoneyPipe } from '../../shared/money.pipe';
                 <div class="col-5"><label class="form-label" for="date">Date</label>
                   <input id="date" type="date" class="form-control" name="date" [(ngModel)]="form()!.date" required></div>
                 <div class="col-6"><label class="form-label" for="cat">Catégorie</label>
-                  <select id="cat" class="form-select" name="categoryId" [(ngModel)]="form()!.categoryId" required>
+                  <select id="cat" class="form-select" name="categoryId" [(ngModel)]="form()!.categoryId" (ngModelChange)="syncOperator(form()!)" required>
                     <option [ngValue]="0" disabled>Choisir…</option>
                     @for (c of categoriesOf(form()!.type); track c.id) { <option [ngValue]="c.id">{{ c.name }}</option> }
                   </select></div>
@@ -174,6 +179,15 @@ import { MoneyPipe } from '../../shared/money.pipe';
                   <select id="acc" class="form-select" name="accountId" [(ngModel)]="form()!.accountId" required>
                     @for (a of activeAccounts(); track a.id) { <option [ngValue]="a.id">{{ a.name }}</option> }
                   </select></div>
+                @if (isCredit(form()!)) {
+                  <div class="col-12"><span class="form-label d-block">Opérateur</span>
+                    <div class="btn-group w-100" role="group" aria-label="Opérateur">
+                      @for (o of OPERATORS; track o.value) {
+                        <input type="radio" class="btn-check" [id]="'op-' + o.value" name="operator" [value]="o.value" [(ngModel)]="form()!.operator" required>
+                        <label class="btn btn-outline-secondary" [for]="'op-' + o.value">{{ o.label }}</label>
+                      }
+                    </div></div>
+                }
                 <div class="col-12"><label class="form-label" for="desc">Description</label>
                   <input id="desc" class="form-control" name="description" maxlength="255" [(ngModel)]="form()!.description"></div>
               </div>
@@ -183,7 +197,40 @@ import { MoneyPipe } from '../../shared/money.pipe';
                 <button type="button" class="btn btn-outline-danger d-lg-none" (click)="removeEditing()" aria-label="Supprimer"><i class="bi bi-trash"></i></button>
               }
               <button type="button" class="btn btn-outline-secondary" (click)="closeForm()">Annuler</button>
-              <button class="btn btn-accent" [disabled]="f.invalid || !form()!.categoryId || saving()">Enregistrer</button>
+              <button class="btn btn-accent" [disabled]="f.invalid || !isComplete(form()!) || saving()">Enregistrer</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <div class="modal-backdrop show"></div>
+    }
+
+    @if (pdf(); as p) {
+      <div class="modal d-block" tabindex="-1" (click)="pdf.set(null)">
+        <div class="modal-dialog modal-dialog-centered" (click)="$event.stopPropagation()">
+          <form class="modal-content" (ngSubmit)="downloadPdf()">
+            <div class="modal-header">
+              <h2 class="modal-title h5"><i class="bi bi-file-earmark-pdf text-danger me-2"></i>Dépenses en PDF</h2>
+              <button type="button" class="btn-close" (click)="pdf.set(null)" aria-label="Fermer"></button>
+            </div>
+            <div class="modal-body">
+              @if (pdfError()) { <div class="alert alert-danger py-2">{{ pdfError() }}</div> }
+              <div class="btn-group w-100 mb-3" role="group" aria-label="Période">
+                @for (o of REPORT_PERIODS; track o.value) {
+                  <input type="radio" class="btn-check" [id]="'rp-' + o.value" name="period" [value]="o.value" [(ngModel)]="p.period">
+                  <label class="btn btn-outline-secondary" [for]="'rp-' + o.value">{{ o.label }}</label>
+                }
+              </div>
+              <label class="form-label" for="pdf-date">{{ p.period === 'WEEK' ? 'Un jour de la semaine' : p.period === 'MONTH' ? 'Un jour du mois' : 'Un jour de l\'année' }}</label>
+              <input id="pdf-date" type="date" class="form-control" name="date" [(ngModel)]="p.date" required>
+              <div class="form-text">{{ pdfRangeText(p.period, p.date) }}</div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" (click)="pdf.set(null)">Annuler</button>
+              <button class="btn btn-accent" [disabled]="!p.date || saving()">
+                @if (saving()) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                <i class="bi bi-download me-1"></i>Télécharger
+              </button>
             </div>
           </form>
         </div>
@@ -229,9 +276,9 @@ import { MoneyPipe } from '../../shared/money.pipe';
                   <div class="d-flex align-items-center gap-2 mb-2">
                     <span class="batch-num">{{ i + 1 }}</span>
                     <div class="btn-group btn-group-sm flex-grow-1" role="group" aria-label="Type">
-                      <input type="radio" class="btn-check" [id]="'b-exp' + i" [name]="'type' + i" value="EXPENSE" [(ngModel)]="l.type" (ngModelChange)="l.categoryId = 0">
+                      <input type="radio" class="btn-check" [id]="'b-exp' + i" [name]="'type' + i" value="EXPENSE" [(ngModel)]="l.type" (ngModelChange)="l.categoryId = 0; l.operator = null">
                       <label class="btn btn-outline-danger" [for]="'b-exp' + i"><i class="bi bi-dash-lg me-1"></i>Dépense</label>
-                      <input type="radio" class="btn-check" [id]="'b-inc' + i" [name]="'type' + i" value="INCOME" [(ngModel)]="l.type" (ngModelChange)="l.categoryId = 0">
+                      <input type="radio" class="btn-check" [id]="'b-inc' + i" [name]="'type' + i" value="INCOME" [(ngModel)]="l.type" (ngModelChange)="l.categoryId = 0; l.operator = null">
                       <label class="btn btn-outline-success" [for]="'b-inc' + i"><i class="bi bi-plus-lg me-1"></i>Revenu</label>
                     </div>
                     <button type="button" class="btn btn-sm btn-link text-body-secondary" (click)="duplicateLine(i)" title="Dupliquer" aria-label="Dupliquer la ligne"><i class="bi bi-copy"></i></button>
@@ -242,7 +289,7 @@ import { MoneyPipe } from '../../shared/money.pipe';
                       <input type="number" min="1" inputmode="decimal" class="form-control batch-amount" [name]="'amount' + i" [(ngModel)]="l.amount" placeholder="Montant" aria-label="Montant (FCFA)" required>
                     </div>
                     <div class="col-7 col-md-3">
-                      <select class="form-select" [name]="'cat' + i" [(ngModel)]="l.categoryId" aria-label="Catégorie" required>
+                      <select class="form-select" [name]="'cat' + i" [(ngModel)]="l.categoryId" (ngModelChange)="syncOperator(l)" aria-label="Catégorie" required>
                         <option [ngValue]="0" disabled>Catégorie…</option>
                         @for (c of categoriesOf(l.type); track c.id) { <option [ngValue]="c.id">{{ c.name }}</option> }
                       </select>
@@ -255,6 +302,16 @@ import { MoneyPipe } from '../../shared/money.pipe';
                         @for (a of activeAccounts(); track a.id) { <option [ngValue]="a.id">{{ a.name }}</option> }
                       </select>
                     </div>
+                    @if (isCredit(l)) {
+                      <div class="col-12">
+                        <div class="btn-group btn-group-sm w-100" role="group" aria-label="Opérateur">
+                          @for (o of OPERATORS; track o.value) {
+                            <input type="radio" class="btn-check" [id]="'op' + i + o.value" [name]="'op' + i" [value]="o.value" [(ngModel)]="l.operator">
+                            <label class="btn btn-outline-secondary" [for]="'op' + i + o.value">{{ o.label }}</label>
+                          }
+                        </div>
+                      </div>
+                    }
                     <div class="col-12">
                       <input class="form-control" [name]="'desc' + i" maxlength="255" [(ngModel)]="l.description" placeholder="Description (facultatif)" aria-label="Description">
                     </div>
@@ -336,6 +393,15 @@ export class TransactionsPage {
   private readonly pendingImport = inject(PendingImportStore);
   editId?: number;
 
+  readonly OPERATORS = MOBILE_OPERATORS;
+  readonly opLabel = operatorLabel;
+  readonly REPORT_PERIODS: { value: ReportPeriod; label: string }[] = [
+    { value: 'WEEK', label: 'Semaine' }, { value: 'MONTH', label: 'Mois' }, { value: 'YEAR', label: 'Année' },
+  ];
+  /** Fenêtre de téléchargement du relevé PDF des dépenses (null = fermée). */
+  readonly pdf = signal<{ period: ReportPeriod; date: string } | null>(null);
+  readonly pdfError = signal('');
+
   constructor() {
     this.api.accounts().subscribe(a => {
       this.accounts.set(a);
@@ -391,6 +457,53 @@ export class TransactionsPage {
     });
   }
 
+  /** Par défaut : aujourd'hui si le mois affiché est le mois courant, sinon le 1er du mois affiché. */
+  openPdf(period: ReportPeriod): void {
+    this.pdfError.set('');
+    const date = this.period() === currentPeriod() ? today() : `${this.period()}-01`;
+    this.pdf.set({ period, date });
+  }
+
+  pdfRangeText(period: ReportPeriod, date: string): string {
+    if (!date) return '';
+    const d = new Date(`${date}T00:00:00`);
+    const fmt = (x: Date) => x.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    if (period === 'WEEK') {
+      const from = new Date(d);
+      from.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      const to = new Date(from);
+      to.setDate(from.getDate() + 6);
+      return `Du lundi ${fmt(from)} au dimanche ${fmt(to)}`;
+    }
+    if (period === 'MONTH') return `Mois de ${d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}`;
+    return `Année ${d.getFullYear()}`;
+  }
+
+  downloadPdf(): void {
+    const p = this.pdf();
+    if (!p?.date) return;
+    this.saving.set(true);
+    this.pdfError.set('');
+    this.api.expensesPdf(p.period, p.date).subscribe({
+      next: blob => {
+        this.saving.set(false);
+        const suffix = p.period === 'WEEK' ? `semaine-${p.date}` : p.period === 'MONTH' ? p.date.slice(0, 7) : p.date.slice(0, 4);
+        downloadBlob(blob, `depenses-${suffix}.pdf`);
+        this.pdf.set(null);
+      },
+      error: err => { this.saving.set(false); this.pdfError.set(errorMessage(err)); },
+    });
+  }
+
+  isCredit(l: TransactionRequest): boolean {
+    return l.type === 'EXPENSE' && isCreditCategory(this.categories().find(c => c.id === l.categoryId));
+  }
+
+  /** L'opérateur n'a de sens que pour la catégorie « Crédit ». */
+  syncOperator(l: TransactionRequest): void {
+    if (!this.isCredit(l)) l.operator = null;
+  }
+
   categoriesOf(type: CategoryType): Category[] {
     return this.categories().filter(c => c.type === type);
   }
@@ -401,7 +514,7 @@ export class TransactionsPage {
     this.formError.set('');
     // Le formulaire est mis à jour en place par ngModel : on le recrée pour chaque ouverture.
     this.form.set({ type: t.type, amount: t.amount, date: t.date, accountId: t.account.id, categoryId: t.category.id,
-      description: t.description ?? '' });
+      description: t.description ?? '', operator: t.operator });
   }
 
   openBatch(lines?: TransactionRequest[]): void {
@@ -446,7 +559,7 @@ export class TransactionsPage {
   }
 
   isComplete(l: TransactionRequest): boolean {
-    return Number(l.amount) > 0 && !!l.categoryId && !!l.accountId && !!l.date;
+    return Number(l.amount) > 0 && !!l.categoryId && !!l.accountId && !!l.date && (!this.isCredit(l) || !!l.operator);
   }
 
   incompleteCount(): number {
@@ -541,7 +654,7 @@ export class TransactionsPage {
 
   private newLine(type: CategoryType, previous?: TransactionRequest): TransactionRequest {
     return {
-      type, amount: null as unknown as number, categoryId: 0, description: '',
+      type, amount: null as unknown as number, categoryId: 0, description: '', operator: null,
       date: previous?.date ?? today(), accountId: previous?.accountId ?? this.activeAccounts()[0]?.id ?? 0,
     };
   }
